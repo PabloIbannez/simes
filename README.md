@@ -46,6 +46,8 @@ data = receiveEncryptedJSON(sock, keys_dict)
 print(data)
 ```
 
+Check the test directory for more examples.
+
 ## Contributing
 Contributions to `simes` are welcome!
 
