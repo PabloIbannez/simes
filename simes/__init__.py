@@ -1,8 +1,6 @@
 import os
 import json
 
-import socket
-
 # Cryptography
 
 from cryptography.hazmat.backends import default_backend
@@ -17,16 +15,29 @@ SIMES_IV_SIZE             = 16   # bytes
 SIMES_RECIEVE_BUFFER_SIZE = 1024 # bytes
 
 SIMES_SENDER_SIZE      = 16 # bytes, with 16 bytes we can write 16 characters with utf8
-SIMES_MESSAGE_MAX_SIZE = 16 # bytes, the max number which can be represented with 16 bytes is 2^(16*8) = 2^128
+
+SIMES_MESSAGE_MAX_SIZE_VARIABLE = 16 # bytes, the max number which can be represented with 16 bytes is 2^(16*8) = 2^128
+SIMES_MESSAGE_MAX_SIZE          = 2 ** (SIMES_MESSAGE_MAX_SIZE_VARIABLE * 8)
+
 SIMES_STATUS_MAX_SIZE  = 16 # bytes, with 16 bytes we can write 16 characters with utf8
 
-SIMES_AVAILABLE_STATUS = ["OK", "ERROR"]
+# Note that SIMES_SENDER_SIZE + SIMES_STATUS_MAX_SIZE % 16 == 0. This is compulsory
+# This has to be done since status send/receive is not padded
+
+if (SIMES_SENDER_SIZE + SIMES_STATUS_MAX_SIZE) % 16 != 0:
+    raise Exception("SIMES_SENDER_SIZE + SIMES_STATUS_MAX_SIZE % 16 != 0")
+
+SIMES_AVAILABLE_STATUS = ["OK", "ERROR",
+                          "HANDSHAKE",
+                          "ACCEPTED", "NOT_ACCEPTED",
+                          "START", "STOP", "PAUSE", "RESUME"]
+
 # Check if all the available status are valid
 for status in SIMES_AVAILABLE_STATUS:
-    if len(status.encode(utf8)) > SIMES_STATUS_MAX_SIZE:
+    if len(status.encode('utf8')) > SIMES_STATUS_MAX_SIZE:
         raise Exception("Status name too long")
 
-def encryptRaw(data, key):
+def encryptRaw(data, key, pad_data = True):
     """
     Encrypts data with the given key. data is expected to be a bytes object.
     """
@@ -38,15 +49,48 @@ def encryptRaw(data, key):
     cipher    = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
     encryptor = cipher.encryptor()
 
-    # Setup the padding
-    padder = padding.PKCS7(SIMES_PADDING_SIZE).padder()
+    if pad_data:
+        # Setup the padding
+        padder = padding.PKCS7(SIMES_PADDING_SIZE).padder()
 
-    # Encrypt the data
-    padded_data    = padder.update(data) + padder.finalize()
-    encrypted_data = encryptor.update(padded_data) + encryptor.finalize()
+        # Encrypt the data
+        padded_data    = padder.update(data) + padder.finalize()
+        encrypted_data = encryptor.update(padded_data) + encryptor.finalize()
+    else:
+        # Encrypt the data
+        encrypted_data = encryptor.update(data) + encryptor.finalize()
 
     # Return the encrypted data
     return iv + encrypted_data
+
+def decryptRaw(data, key, pad_data = True):
+    """
+    Receives encrypted data. Returns a bytes object.
+    It is expected that the data created with encryptRaw.
+    """
+
+    # Receive the message
+    iv             = data[:SIMES_IV_SIZE]
+    encrypted_data = data[SIMES_IV_SIZE:]
+
+    # Setup the cipher
+    cipher    = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+    decryptor = cipher.decryptor()
+
+    if pad_data:
+        # Setup the unpadder
+        unpadder = padding.PKCS7(SIMES_PADDING_SIZE).unpadder()
+
+        # Decrypt the data
+        padded_data = decryptor.update(encrypted_data) + decryptor.finalize()
+        data        = unpadder.update(padded_data) + unpadder.finalize()
+    else:
+        # Decrypt the data
+        data = decryptor.update(encrypted_data) + decryptor.finalize()
+
+    # Return the decrypted data
+    return data
+
 
 
 def sendEncryptedRaw(sock, sender, data, key):
@@ -62,7 +106,7 @@ def sendEncryptedRaw(sock, sender, data, key):
     encrypted_data = encryptRaw(data, key)
 
     # Create the message
-    sender_bytes = sender.encode(utf8)
+    sender_bytes = sender.encode("utf8")
 
     if len(sender_bytes)   > SIMES_SENDER_SIZE:
         raise Exception("Sender name too long")
@@ -73,8 +117,8 @@ def sendEncryptedRaw(sock, sender, data, key):
     sender_bytes = b"\x20" * (SIMES_SENDER_SIZE - len(sender_bytes)) + sender_bytes
 
     # Create size bytes and add padding (we add x00 to the beginning of the size bytes)
-    size_bytes = len(encrypted_data).to_bytes(SIMES_MESSAGE_MAX_SIZE, byteorder="big")
-    size_bytes = b"\x00" * (SIMES_MESSAGE_MAX_SIZE - len(size_bytes)) + size_bytes
+    size_bytes = len(encrypted_data).to_bytes(SIMES_MESSAGE_MAX_SIZE_VARIABLE, byteorder="big")
+    size_bytes = b"\x00" * (SIMES_MESSAGE_MAX_SIZE_VARIABLE - len(size_bytes)) + size_bytes
 
     # Create the message
     message = sender_bytes + size_bytes + encrypted_data
@@ -92,32 +136,10 @@ def sendEncryptedJSON(sock, sender, data, key):
     """
 
     # Encode the data
-    data = json.dumps(data).encode(utf8)
+    data = json.dumps(data).encode("utf8")
 
     # Send the data
     sendEncryptedRaw(sock, sender, data, key)
-
-def decryptRaw(data, key):
-    """
-    Receives encrypted data. Returns a bytes object.
-    It is expected that the data created with encryptRaw.
-    """
-
-    # Receive the message
-    iv             = data[:SIMES_IV_SIZE]
-    encrypted_data = data[SIMES_IV_SIZE:]
-
-    # Setup the cipher
-    cipher    = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
-    decryptor = cipher.decryptor()
-
-    # Decrypt the data
-    padded_data    = decryptor.update(encrypted_data) + decryptor.finalize()
-    unpadder       = padding.PKCS7(SIMES_PADDING_SIZE).unpadder()
-    unpadded_data  = unpadder.update(padded_data) + unpadder.finalize()
-
-    # Return the decrypted data
-    return unpadded_data
 
 def receiveEncryptedRaw(sock, keys_dict):
     """
@@ -126,9 +148,9 @@ def receiveEncryptedRaw(sock, keys_dict):
     """
 
     sender_bytes = sock.recv(SIMES_SENDER_SIZE)
-    size_bytes   = sock.recv(SIMES_MESSAGE_MAX_SIZE)
+    size_bytes   = sock.recv(SIMES_MESSAGE_MAX_SIZE_VARIABLE)
 
-    sender = sender_bytes.decode(utf8).strip()
+    sender = sender_bytes.decode("utf8").strip()
     size   = int.from_bytes(size_bytes, byteorder="big")
 
     # Check if the sender is in the keys_dict
@@ -157,7 +179,7 @@ def receiveEncryptedJSON(sock, keys_dict):
 
     # Decode the data
     try:
-        data = json.loads(data.decode(utf8))
+        data = json.loads(data.decode("utf8"))
     except:
         raise Exception("Invalid data")
 
@@ -175,7 +197,7 @@ def sendStatus(sock, sender, status, key):
         raise Exception("Invalid status")
 
     # Create the message
-    sender_bytes = sender.encode(utf8)
+    sender_bytes = sender.encode("utf8")
 
     if len(sender_bytes)   > SIMES_SENDER_SIZE:
         raise Exception("Sender name too long")
@@ -183,11 +205,11 @@ def sendStatus(sock, sender, status, key):
     # Add padding to the sender name. We add x20 (space) to the beginning of the sender name
     sender_bytes = b"\x20" * (SIMES_SENDER_SIZE - len(sender_bytes)) + sender_bytes
 
-    status_bytes = status.encode(utf8)
+    status_bytes = status.encode("utf8")
     # Add padding to the status name. We add x20 (space) to the beginning of the status name
     status_bytes = b"\x20" * (SIMES_STATUS_MAX_SIZE - len(status_bytes)) + status_bytes
     # Encrypt the status
-    encrypted_status = encryptRaw(status_bytes, key)
+    encrypted_status = encryptRaw(status_bytes, key, pad_data = False)
 
     # Create the message
     message = sender_bytes + encrypted_status
@@ -202,7 +224,7 @@ def receiveStatus(sock, keys_dict):
 
     sender_bytes = sock.recv(SIMES_SENDER_SIZE)
 
-    sender = sender_bytes.decode(utf8).strip()
+    sender = sender_bytes.decode("utf8").strip()
 
     # Check if the sender is in the keys_dict
     if sender not in keys_dict:
@@ -211,10 +233,10 @@ def receiveStatus(sock, keys_dict):
     key = keys_dict[sender]
 
     # Receive the message
-    encrypted_status = sock.recv(SIMES_STATUS_MAX_SIZE)
+    encrypted_status = sock.recv(SIMES_IV_SIZE + SIMES_STATUS_MAX_SIZE)
 
     # Decrypt the status
-    status = decryptRaw(encrypted_status, key)
+    status = decryptRaw(encrypted_status, key, pad_data=False)
 
     # Return the status
-    return status.decode(utf8).strip()
+    return status.decode("utf8").strip()
