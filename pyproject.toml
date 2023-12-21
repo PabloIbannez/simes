@@ -1,6 +1,6 @@
 [project]
 name="simes"
-version="0.0.1"
+version="0.1.0"
 authors = [
     {name = "Pablo Ibáñez-Freire", email = "p.ibanez.fre@gmail.com"},
 ]
