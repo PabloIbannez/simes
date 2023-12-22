@@ -68,18 +68,18 @@ def server(key_dict):
         print("Server: Connection from", client_address)
 
         try:
-            status = simes.receiveStatus(connection, key_dict)
+            _,status = simes.receiveStatus(connection, key_dict)
             print("Server: Received status:", status)
             print("Server: Sending status OK")
             simes.sendStatus(connection, "server", "OK", key)
 
-            data = simes.receiveEncryptedJSON(connection, key_dict)
+            _,data = simes.receiveEncryptedJSON(connection, key_dict)
             print("Server: Received data:", data)
             message = {"message": "Hello client!"}
             print("Server: Sending message:", message)
             simes.sendEncryptedJSON(connection, "server", message, key)
 
-            status = simes.receiveStatus(connection, key_dict)
+            _,status = simes.receiveStatus(connection, key_dict)
             if status == "STOP":
                 print("Server: Received STOP signal")
                 break
@@ -104,13 +104,13 @@ try:
     print("Client: Sending status HANDSHAKE...")
     simes.sendStatus(sock, "client", "HANDSHAKE", key)
 
-    status = simes.receiveStatus(sock, key_dict)
+    _,status = simes.receiveStatus(sock, key_dict)
     print("Client: Received status:", status)
     if status == "OK":
         message = {"field1": "value1", "field2": "value2", "message": "Hello server!"}
         print("Client: Sending message:", message)
         simes.sendEncryptedJSON(sock, "client", message, key)
-        data = simes.receiveEncryptedJSON(sock, key_dict)
+        _,data = simes.receiveEncryptedJSON(sock, key_dict)
         print("Client: Received data:", data)
     else:
         print("Error: Client: Received wrong status:", status)

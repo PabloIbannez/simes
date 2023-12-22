@@ -168,8 +168,8 @@ def receiveEncryptedRaw(sock, keys_dict,timeout = None):
     # Set timeout to None (blocking)
     sock.settimeout(None)
 
-    # Return the decrypted data
-    return data
+    # Return sender/data
+    return sender, data
 
 def receiveEncryptedJSON(sock, keys_dict):
     """
@@ -178,7 +178,7 @@ def receiveEncryptedJSON(sock, keys_dict):
     """
 
     # Receive the data
-    data = receiveEncryptedRaw(sock, keys_dict)
+    sender,data = receiveEncryptedRaw(sock, keys_dict)
 
     # Decode the data
     try:
@@ -186,8 +186,8 @@ def receiveEncryptedJSON(sock, keys_dict):
     except:
         raise Exception("Invalid data")
 
-    # Return the data
-    return data
+    # Return sender/data
+    return sender, data
 
 # Status sending/receiving functions
 def sendStatus(sock, sender, status, key):
@@ -246,5 +246,5 @@ def receiveStatus(sock, keys_dict, timeout = None):
     # Set timeout to None (blocking)
     sock.settimeout(None)
 
-    # Return the status
-    return status.decode("utf8").strip()
+    # Return sender/status
+    return sender, status.decode("utf8").strip()

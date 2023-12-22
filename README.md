@@ -42,8 +42,8 @@ from simes import receiveEncryptedJSON
 
 keys_dict	= {'sender_name': b'secret_key_16_byte'}
 
-data = receiveEncryptedJSON(sock, keys_dict)
-print(data)
+sender, data = receiveEncryptedJSON(sock, keys_dict)
+print("Received message from", sender, ":" data)
 ```
 
 Check the test directory for more examples.
