@@ -9,10 +9,9 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import padding
 
 # block size is 128 bits since we're using AES, 128 bits = 16 bytes
-SIMES_PADDING_SIZE        = 128  # bits
+SIMES_PADDING_SIZE     = 128  # bits
 
-SIMES_IV_SIZE             = 16   # bytes
-SIMES_RECIEVE_BUFFER_SIZE = 1024 # bytes
+SIMES_IV_SIZE          = 16   # bytes
 
 SIMES_SENDER_SIZE      = 16 # bytes, with 16 bytes we can write 16 characters with utf8
 
@@ -141,11 +140,13 @@ def sendEncryptedJSON(sock, sender, data, key):
     # Send the data
     sendEncryptedRaw(sock, sender, data, key)
 
-def receiveEncryptedRaw(sock, keys_dict):
+def receiveEncryptedRaw(sock, keys_dict,timeout = None):
     """
     Receives encrypted data from the socket. Returns a bytes object.
     It is expected that the data was sent with sendEncryptedRaw.
     """
+
+    sock.settimeout(timeout)
 
     sender_bytes = sock.recv(SIMES_SENDER_SIZE)
     size_bytes   = sock.recv(SIMES_MESSAGE_MAX_SIZE_VARIABLE)
@@ -159,11 +160,13 @@ def receiveEncryptedRaw(sock, keys_dict):
 
     key = keys_dict[sender]
 
-    # Receive the message
     encrypted_data = sock.recv(size)
 
     # Decrypt the data
     data = decryptRaw(encrypted_data, key)
+
+    # Set timeout to None (blocking)
+    sock.settimeout(None)
 
     # Return the decrypted data
     return data
@@ -217,10 +220,12 @@ def sendStatus(sock, sender, status, key):
     # Send the message
     sock.sendall(message)
 
-def receiveStatus(sock, keys_dict):
+def receiveStatus(sock, keys_dict, timeout = None):
     """
     Receives a status from the socket. Returns a string.
     """
+
+    sock.settimeout(timeout)
 
     sender_bytes = sock.recv(SIMES_SENDER_SIZE)
 
@@ -237,6 +242,9 @@ def receiveStatus(sock, keys_dict):
 
     # Decrypt the status
     status = decryptRaw(encrypted_status, key, pad_data=False)
+
+    # Set timeout to None (blocking)
+    sock.settimeout(None)
 
     # Return the status
     return status.decode("utf8").strip()
