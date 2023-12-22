@@ -8,6 +8,28 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import padding
 
+# Exceptions
+
+class UnknownSenderError(Exception):
+    """Exception raised when an unknown sender is encountered."""
+    pass
+
+class NameTooLongError(Exception):
+    """Exception raised when a name exceeds the allowed length."""
+    pass
+
+class MessageTooLongError(Exception):
+    """Exception raised when a message exceeds the maximum allowed size."""
+    pass
+
+class InvalidStatusError(Exception):
+    """Exception raised when an invalid status is provided."""
+    pass
+
+class PaddingValidationError(Exception):
+    """Exception raised when padding validation fails."""
+    pass
+
 # block size is 128 bits since we're using AES, 128 bits = 16 bytes
 SIMES_PADDING_SIZE     = 128  # bits
 
@@ -24,7 +46,7 @@ SIMES_STATUS_MAX_SIZE  = 16 # bytes, with 16 bytes we can write 16 characters wi
 # This has to be done since status send/receive is not padded
 
 if (SIMES_SENDER_SIZE + SIMES_STATUS_MAX_SIZE) % 16 != 0:
-    raise Exception("SIMES_SENDER_SIZE + SIMES_STATUS_MAX_SIZE % 16 != 0")
+    raise PaddingValidationError("SIMES_SENDER_SIZE + SIMES_STATUS_MAX_SIZE % 16 != 0")
 
 SIMES_AVAILABLE_STATUS = ["OK", "ERROR",
                           "HANDSHAKE",
@@ -34,7 +56,27 @@ SIMES_AVAILABLE_STATUS = ["OK", "ERROR",
 # Check if all the available status are valid
 for status in SIMES_AVAILABLE_STATUS:
     if len(status.encode('utf8')) > SIMES_STATUS_MAX_SIZE:
-        raise Exception("Status name too long")
+        raise NameTooLongError("Status name is too long")
+
+def recv_all(sock, expected_size):
+    """
+    Receives the expected amount of data from the socket.
+
+    Args:
+    sock (socket.socket): The socket object.
+    expected_size (int): The expected size of the data to receive.
+
+    Returns:
+    bytes: The received data.
+    """
+    data = b''
+    while len(data) < expected_size:
+        remaining_size = expected_size - len(data)
+        packet = sock.recv(remaining_size)
+        if not packet:
+            raise ConnectionError("Socket connection broken")
+        data += packet
+    return data
 
 def encryptRaw(data, key, pad_data = True):
     """
@@ -108,9 +150,9 @@ def sendEncryptedRaw(sock, sender, data, key):
     sender_bytes = sender.encode("utf8")
 
     if len(sender_bytes)   > SIMES_SENDER_SIZE:
-        raise Exception("Sender name too long")
+        raise NameTooLongError("Sender name too long")
     if len(encrypted_data) > SIMES_MESSAGE_MAX_SIZE:
-        raise Exception("Message too long")
+        raise MessageTooLongError("Message too long")
 
     # Add padding to the sender name. We add x20 (space) to the beginning of the sender name
     sender_bytes = b"\x20" * (SIMES_SENDER_SIZE - len(sender_bytes)) + sender_bytes
@@ -148,19 +190,19 @@ def receiveEncryptedRaw(sock, keys_dict,timeout = None):
 
     sock.settimeout(timeout)
 
-    sender_bytes = sock.recv(SIMES_SENDER_SIZE)
-    size_bytes   = sock.recv(SIMES_MESSAGE_MAX_SIZE_VARIABLE)
+    sender_bytes = recv_all(sock,SIMES_SENDER_SIZE)
+    size_bytes   = recv_all(sock,SIMES_MESSAGE_MAX_SIZE_VARIABLE)
 
     sender = sender_bytes.decode("utf8").strip()
     size   = int.from_bytes(size_bytes, byteorder="big")
 
     # Check if the sender is in the keys_dict
     if sender not in keys_dict:
-        raise Exception("Unknown sender")
+        raise UnknownSenderError("Unknown sender")
 
     key = keys_dict[sender]
 
-    encrypted_data = sock.recv(size)
+    encrypted_data = recv_all(sock,size)
 
     # Decrypt the data
     data = decryptRaw(encrypted_data, key)
@@ -183,8 +225,8 @@ def receiveEncryptedJSON(sock, keys_dict):
     # Decode the data
     try:
         data = json.loads(data.decode("utf8"))
-    except:
-        raise Exception("Invalid data")
+    except json.JSONDecodeError as e:
+        raise e
 
     # Return sender/data
     return sender, data
@@ -197,13 +239,13 @@ def sendStatus(sock, sender, status, key):
 
     # Check if the status is valid
     if status not in SIMES_AVAILABLE_STATUS:
-        raise Exception("Invalid status")
+        raise InvalidStatusError("Invalid status")
 
     # Create the message
     sender_bytes = sender.encode("utf8")
 
     if len(sender_bytes)   > SIMES_SENDER_SIZE:
-        raise Exception("Sender name too long")
+        raise NameTooLongError("Sender name too long")
 
     # Add padding to the sender name. We add x20 (space) to the beginning of the sender name
     sender_bytes = b"\x20" * (SIMES_SENDER_SIZE - len(sender_bytes)) + sender_bytes
@@ -227,18 +269,18 @@ def receiveStatus(sock, keys_dict, timeout = None):
 
     sock.settimeout(timeout)
 
-    sender_bytes = sock.recv(SIMES_SENDER_SIZE)
+    sender_bytes = recv_all(sock,SIMES_SENDER_SIZE)
 
     sender = sender_bytes.decode("utf8").strip()
 
     # Check if the sender is in the keys_dict
     if sender not in keys_dict:
-        raise Exception("Unknown sender")
+        raise UnknownSenderError("Unknown sender")
 
     key = keys_dict[sender]
 
     # Receive the message
-    encrypted_status = sock.recv(SIMES_IV_SIZE + SIMES_STATUS_MAX_SIZE)
+    encrypted_status = recv_all(sock,SIMES_IV_SIZE + SIMES_STATUS_MAX_SIZE)
 
     # Decrypt the status
     status = decryptRaw(encrypted_status, key, pad_data=False)
